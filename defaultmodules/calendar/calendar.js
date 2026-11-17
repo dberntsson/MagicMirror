@@ -7,6 +7,8 @@ Module.register("calendar", {
 		maximumNumberOfDays: 365,
 		limitDays: 0, // Limit the number of days shown, 0 = no limit
 		pastDaysCount: 0,
+		displayEventDate: true,
+		displayEventTime: true,
 		displaySymbol: true,
 		defaultSymbol: "calendar-days", // Fontawesome Symbol see https://fontawesome.com/search?ic=free&o=r
 		defaultSymbolClassName: "fas fa-fw fa-",
@@ -260,7 +262,7 @@ Module.register("calendar", {
 			const eventEndDateMoment = this.timestampToMoment(event.endDate);
 			const dateAsString = eventStartDateMoment.format(this.config.dateFormat);
 			if (this.config.timeFormat === "dateheaders") {
-				if (lastSeenDate !== dateAsString) {
+				if (this.config.displayEventDate && lastSeenDate !== dateAsString) {
 					const dateRow = document.createElement("tr");
 					dateRow.className = "dateheader normal";
 					if (event.today) dateRow.className += " today";
@@ -386,19 +388,44 @@ Module.register("calendar", {
 			if (this.config.timeFormat === "dateheaders") {
 				this.renderDateHeadersEventTime(eventWrapper, titleWrapper, event, eventStartDateMoment, eventEndDateMoment);
 			} else {
-				const timeWrapper = document.createElement("td");
-
 				eventWrapper.appendChild(titleWrapper);
-				const now = moment();
 
-				if (this.config.timeFormat === "absolute") {
-					timeWrapper.innerHTML = this.buildAbsoluteTimeText(event, eventStartDateMoment, eventEndDateMoment, now);
+				const displayDate = this.config.displayEventDate;
+				const displayTime = this.config.displayEventTime;
+
+				// Keep the original formatter untouched for the default configuration.
+				if (displayDate && displayTime) {
+					const timeWrapper = document.createElement("td");
+					const now = moment();
+					timeWrapper.innerHTML = this.config.timeFormat === "absolute"
+						? this.buildAbsoluteTimeText(event, eventStartDateMoment, eventEndDateMoment, now)
+						: this.buildRelativeTimeText(event, eventStartDateMoment, eventEndDateMoment, now);
+					timeWrapper.className = `time light ${this.timeClassForUrl(event.url)}`;
+					eventWrapper.appendChild(timeWrapper);
 				} else {
-					timeWrapper.innerHTML = this.buildRelativeTimeText(event, eventStartDateMoment, eventEndDateMoment, now);
-				}
+					const now = moment();
+					let text = "";
+					if (displayDate || displayTime) {
+						if (this.config.timeFormat === "absolute") {
+							text = displayDate
+								? this.buildAbsoluteEventDateText(event, eventStartDateMoment, eventEndDateMoment, now)
+								: this.buildAbsoluteEventTimeText(event, eventStartDateMoment, eventEndDateMoment, now);
+						} else {
+							text = displayDate
+								? this.buildRelativeEventDateText(event, eventStartDateMoment, eventEndDateMoment, now)
+								: this.buildRelativeEventTimeText(event, eventStartDateMoment, eventEndDateMoment, now);
+						}
+					}
 
-				timeWrapper.className = `time light ${this.timeClassForUrl(event.url)}`;
-				eventWrapper.appendChild(timeWrapper);
+					if (text) {
+						const timeWrapper = document.createElement("td");
+						timeWrapper.innerHTML = text;
+						timeWrapper.className = `time light ${this.timeClassForUrl(event.url)}`;
+						eventWrapper.appendChild(timeWrapper);
+					} else {
+						titleWrapper.colSpan = "2";
+					}
+				}
 			}
 
 			// Create fade effect.
@@ -707,18 +734,18 @@ Module.register("calendar", {
 	renderDateHeadersEventTime (eventWrapper, titleWrapper, event, eventStartDateMoment, eventEndDateMoment) {
 		if (this.config.flipDateHeaderTitle) eventWrapper.appendChild(titleWrapper);
 
+		let showValueCell = false;
+
 		if (event.fullDayEvent) {
 			const adjustedEndMoment = this.getAdjustedFullDayEndMoment(eventEndDateMoment);
-			if (this.config.showEnd && !this.config.showEndsOnlyWithDuration && !eventStartDateMoment.isSame(adjustedEndMoment, "d")) {
+			if (this.config.displayEventDate && this.config.showEnd && !this.config.showEndsOnlyWithDuration && !eventStartDateMoment.isSame(adjustedEndMoment, "d")) {
 				const timeWrapper = this.createDateHeadersTimeWrapper(event.url);
 				timeWrapper.innerHTML = `-${CalendarUtils.capFirst(adjustedEndMoment.format(this.config.fullDayEventDateFormat))}`;
 				eventWrapper.appendChild(timeWrapper);
+				showValueCell = true;
 				if (!this.config.flipDateHeaderTitle) titleWrapper.classList.add("align-right");
-			} else {
-				titleWrapper.colSpan = "2";
-				titleWrapper.classList.add("align-left");
 			}
-		} else {
+		} else if (this.config.displayEventTime) {
 			const timeWrapper = this.createDateHeadersTimeWrapper(event.url);
 			timeWrapper.innerHTML = eventStartDateMoment.format("LT");
 
@@ -728,10 +755,185 @@ Module.register("calendar", {
 			}
 
 			eventWrapper.appendChild(timeWrapper);
+			showValueCell = true;
 			if (!this.config.flipDateHeaderTitle) titleWrapper.classList.add("align-right");
 		}
 
+		if (!showValueCell) {
+			titleWrapper.colSpan = "2";
+			titleWrapper.classList.add("align-left");
+		}
+
 		if (!this.config.flipDateHeaderTitle) eventWrapper.appendChild(titleWrapper);
+	},
+
+	/**
+	 * Formats only the date part for absolute mode.
+	 * Full-day relative labels and multi-day ranges are date information.
+	 * @param {object} event The calendar event.
+	 * @param {moment.Moment} eventStartDateMoment The event start moment.
+	 * @param {moment.Moment} eventEndDateMoment The event end moment.
+	 * @param {moment.Moment} now The current moment.
+	 * @returns {string} The formatted date text.
+	 */
+	buildAbsoluteEventDateText (event, eventStartDateMoment, eventEndDateMoment, now) {
+		if (!event.fullDayEvent) {
+			return CalendarUtils.capFirst(eventStartDateMoment.format(this.config.dateFormat));
+		}
+
+		const adjustedEndMoment = this.getAdjustedFullDayEndMoment(eventEndDateMoment);
+		let dateText = CalendarUtils.capFirst(eventStartDateMoment.format(this.config.fullDayEventDateFormat));
+
+		if (this.config.showEnd && !this.config.showEndsOnlyWithDuration && !eventStartDateMoment.isSame(adjustedEndMoment, "d")) {
+			dateText += `-${CalendarUtils.capFirst(adjustedEndMoment.format(this.config.fullDayEventDateFormat))}`;
+		} else if (!eventStartDateMoment.isSame(adjustedEndMoment, "d") && eventStartDateMoment.isBefore(now)) {
+			dateText = CalendarUtils.capFirst(now.format(this.config.fullDayEventDateFormat));
+		}
+
+		if (this.config.nextDaysRelative) {
+			let relativeLabel = false;
+			if (event.today) {
+				dateText = CalendarUtils.capFirst(this.translate("TODAY"));
+				relativeLabel = true;
+			} else if (event.yesterday) {
+				dateText = CalendarUtils.capFirst(this.translate("YESTERDAY"));
+				relativeLabel = true;
+			} else if (event.tomorrow) {
+				dateText = CalendarUtils.capFirst(this.translate("TOMORROW"));
+				relativeLabel = true;
+			} else if (event.dayAfterTomorrow && this.translate("DAYAFTERTOMORROW") !== "DAYAFTERTOMORROW") {
+				dateText = CalendarUtils.capFirst(this.translate("DAYAFTERTOMORROW"));
+				relativeLabel = true;
+			}
+
+			if (relativeLabel && this.config.showEnd && !this.config.showEndsOnlyWithDuration && !eventStartDateMoment.isSame(adjustedEndMoment, "d")) {
+				dateText += `-${CalendarUtils.capFirst(adjustedEndMoment.format(this.config.fullDayEventDateFormat))}`;
+			}
+		}
+
+		return dateText;
+	},
+
+	/**
+	 * Formats time information for absolute mode without leaking date text when
+	 * the date display is disabled. showEnd controls only the event end.
+	 * @param {object} event The calendar event.
+	 * @param {moment.Moment} eventStartDateMoment The event start moment.
+	 * @param {moment.Moment} eventEndDateMoment The event end moment.
+	 * @param {moment.Moment} now The current moment.
+	 * @returns {string} The formatted time text.
+	 */
+	buildAbsoluteEventTimeText (event, eventStartDateMoment, eventEndDateMoment, now) {
+		if (event.fullDayEvent) return "";
+
+		if (this.config.getRelative > 0 && eventStartDateMoment.isBefore(now)) {
+			return CalendarUtils.capFirst(this.translate("RUNNING", {
+				fallback: `${this.translate("RUNNING")} {timeUntilEnd}`,
+				timeUntilEnd: eventEndDateMoment.fromNow(true)
+			}));
+		}
+
+		if (this.config.urgency > 0 && eventStartDateMoment.diff(now, "d") < this.config.urgency) {
+			return CalendarUtils.capFirst(eventStartDateMoment.fromNow());
+		}
+
+		let timeText = eventStartDateMoment.format("LT");
+
+		if (this.config.showEnd && (!this.config.showEndsOnlyWithDuration || this.hasEventDuration(event))) {
+			// When the date is hidden, never leak a date through dateEndFormat.
+			const endFormat = this.isSameDay(eventStartDateMoment, eventEndDateMoment)
+				? "LT"
+				: (this.config.displayEventDate ? this.config.dateEndFormat : "LT");
+			timeText += `-${CalendarUtils.capFirst(eventEndDateMoment.format(endFormat))}`;
+		}
+
+		return timeText;
+	},
+
+	/**
+	 * Formats only the date part for relative mode.
+	 * Relative day labels (Today/Tomorrow/weekday) are date information.
+	 * @param {object} event The calendar event.
+	 * @param {moment.Moment} eventStartDateMoment The event start moment.
+	 * @param {moment.Moment} eventEndDateMoment The event end moment.
+	 * @param {moment.Moment} now The current moment.
+	 * @returns {string} The formatted date text.
+	 */
+	buildRelativeEventDateText (event, eventStartDateMoment, eventEndDateMoment, now) {
+		if (event.fullDayEvent) {
+			let dateText = CalendarUtils.capFirst(eventStartDateMoment.format(this.config.fullDayEventDateFormat));
+			if (event.today || (event.fullDayEvent && eventEndDateMoment.diff(now, "days") === 0)) {
+				dateText = CalendarUtils.capFirst(this.translate("TODAY"));
+			} else if (event.dayBeforeYesterday && this.translate("DAYBEFOREYESTERDAY") !== "DAYBEFOREYESTERDAY") {
+				dateText = CalendarUtils.capFirst(this.translate("DAYBEFOREYESTERDAY"));
+			} else if (event.yesterday) {
+				dateText = CalendarUtils.capFirst(this.translate("YESTERDAY"));
+			} else if (event.tomorrow) {
+				dateText = CalendarUtils.capFirst(this.translate("TOMORROW"));
+			} else if (event.dayAfterTomorrow && this.translate("DAYAFTERTOMORROW") !== "DAYAFTERTOMORROW") {
+				dateText = CalendarUtils.capFirst(this.translate("DAYAFTERTOMORROW"));
+			}
+
+			if (this.config.showEnd && !this.config.showEndsOnlyWithDuration) {
+				const adjustedEndMoment = this.getAdjustedFullDayEndMoment(eventEndDateMoment);
+				if (!eventStartDateMoment.isSame(adjustedEndMoment, "d")) {
+					dateText += `-${CalendarUtils.capFirst(adjustedEndMoment.format(this.config.fullDayEventDateFormat))}`;
+				}
+			}
+			return dateText;
+		}
+
+		const dateFormat = this.config.dateFormat;
+		return CalendarUtils.capFirst(eventStartDateMoment.calendar(null, {
+			sameDay: `[${this.translate("TODAY")}]`,
+			nextDay: `[${this.translate("TOMORROW")}]`,
+			nextWeek: "dddd",
+			lastDay: `[${this.translate("YESTERDAY")}]`,
+			lastWeek: "dddd",
+			sameElse: dateFormat
+		}));
+	},
+
+	/**
+	 * Formats only time/duration information for relative mode.
+	 * hideTime remains an independent legacy setting.
+	 * @param {object} event The calendar event.
+	 * @param {moment.Moment} eventStartDateMoment The event start moment.
+	 * @param {moment.Moment} eventEndDateMoment The event end moment.
+	 * @param {moment.Moment} now The current moment.
+	 * @returns {string} The formatted time text.
+	 */
+	buildRelativeEventTimeText (event, eventStartDateMoment, eventEndDateMoment, now) {
+		if (event.fullDayEvent) return "";
+
+		if (eventStartDateMoment.isBefore(now)) {
+			return CalendarUtils.capFirst(this.translate("RUNNING", {
+				fallback: `${this.translate("RUNNING")} {timeUntilEnd}`,
+				timeUntilEnd: eventEndDateMoment.fromNow(true)
+			}));
+		}
+
+		if (this.config.hideTime) {
+			return this.config.showTimeToday && eventStartDateMoment.isSame(now, "d")
+				? eventStartDateMoment.format("LT")
+				: "";
+		}
+
+		if (eventStartDateMoment.diff(now, "h") < this.config.getRelative) {
+			return CalendarUtils.capFirst(eventStartDateMoment.fromNow());
+		}
+
+		const startIsTodayOrNear = eventStartDateMoment.isSame(now, "d")
+		  || eventStartDateMoment.isSame(now.clone().add(1, "day"), "d")
+		  || eventStartDateMoment.isSame(now, "week");
+
+		let timeText = startIsTodayOrNear ? eventStartDateMoment.format("LT") : "";
+
+		if (this.shouldShowRelativeTimedEnd(event)) {
+			timeText += `-${eventEndDateMoment.format("LT")}`;
+		}
+
+		return timeText;
 	},
 
 	buildAbsoluteTimeText (event, eventStartDateMoment, eventEndDateMoment, now) {
